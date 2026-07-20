@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Qahoot
 // @namespace    qahoot-prank
-// @version      1.3
+// @version      1.4
 // @description  Replace Kahoot logo with Qahoot logo
 // @match        https://*.kahoot.it/*
 // @run-at       document-start
@@ -14,8 +14,13 @@
   'use strict';
 
   // White silhouette on a transparent background — correct as-is on Kahoot's
-  // purple surfaces (control bar, splash screen, podium). On white surfaces
-  // (dashboard) it's recolored to KAHOOT_PURPLE via an SVG mask, never boxed.
+  // colored surfaces. On light/white surfaces it's recolored to KAHOOT_PURPLE
+  // via an SVG mask, never boxed. Which case applies is NOT assumed per
+  // selector (backgrounds vary by theme/skin) — it's read off the fill Kahoot
+  // itself already painted the original logo with: if their wordmark is
+  // purple, that instance sits on a light background and needs recoloring;
+  // if it's already white (or anything else), it's on a colored/dark
+  // background and the white silhouette drops in unchanged.
   const QAHOOT_LOGO = "https://github.com/maxerrules/Qahoot/blob/main/qahoot.png?raw=true";
   const KAHOOT_PURPLE = "#46178F";
   const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -29,14 +34,66 @@
     return /\bgo\b/i.test(text);
   }
 
-  // Used on Kahoot's purple surfaces: the white logo is dropped in directly.
-  function svgSwapWhite(node, w, h) {
+  function parseColorToRgb(colorStr) {
+    if (!colorStr || colorStr === 'none') return null;
+    const probe = document.createElement('span');
+    probe.style.color = colorStr;
+    document.documentElement.appendChild(probe);
+    const resolved = getComputedStyle(probe).color;
+    probe.remove();
+    const m = resolved.match(/\d+/g);
+    return m ? m.slice(0, 3).map(Number) : null;
+  }
+
+  // Kahoot's purple family (e.g. #46178F) reads as a violet hue: blue is the
+  // dominant channel and red outweighs green. That signature is distinct
+  // from white, and from Kahoot's other brand colors (blue/red/teal/yellow),
+  // so it's a reliable "this instance needs recoloring" signal.
+  function isPurpleFill(colorStr) {
+    const rgb = parseColorToRgb(colorStr);
+    if (!rgb) return false;
+    const [r, g, b] = rgb;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    if (max > 235 && min > 235) return false; // near-white
+    if (max < 20) return false; // near-black / fully transparent probe
+    return b > g + 15 && r > g;
+  }
+
+  // Draws the recolored-or-not logo into an x/y/w/h box, based on whatever
+  // fill Kahoot's own original element had at that spot.
+  function paintLogo(x, y, w, h, originalFill, appendMaskTo) {
+    if (isPurpleFill(originalFill)) {
+      return purpleMaskedRect(x, y, w, h, appendMaskTo);
+    }
+    const image = document.createElementNS(SVG_NS, 'image');
+    image.setAttributeNS(XLINK_NS, 'href', QAHOOT_LOGO);
+    image.setAttribute('x', x);
+    image.setAttribute('y', y);
+    image.setAttribute('width', w);
+    image.setAttribute('height', h);
+    image.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    return image;
+  }
+
+  function svgSwapAdaptive(node, w, h) {
+    const originalPath = node.querySelector('path, [fill]');
+    const fill = originalPath ? (originalPath.getAttribute('fill') || getComputedStyle(originalPath).fill) : null;
     const go = isGoVariant(node);
     node.setAttribute('viewBox', `0 0 ${w} ${h}`);
-    node.innerHTML = `
-      <image href="${QAHOOT_LOGO}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet"/>
-      ${go ? `<text x="${w - 4}" y="${h - 6}" text-anchor="end" font-family="Verdana, Arial, sans-serif" font-weight="700" font-size="${h * 0.22}" fill="#FFFFFF">GO</text>` : ''}
-    `;
+    node.innerHTML = '';
+    node.appendChild(paintLogo(0, 0, w, h, fill, node));
+    if (go) {
+      const text = document.createElementNS(SVG_NS, 'text');
+      text.setAttribute('x', w - 4);
+      text.setAttribute('y', h - 6);
+      text.setAttribute('text-anchor', 'end');
+      text.setAttribute('font-family', 'Verdana, Arial, sans-serif');
+      text.setAttribute('font-weight', '700');
+      text.setAttribute('font-size', h * 0.22);
+      text.setAttribute('fill', isPurpleFill(fill) ? KAHOOT_PURPLE : '#FFFFFF');
+      text.textContent = 'GO';
+      node.appendChild(text);
+    }
   }
 
   function imgSwap(node) {
@@ -51,9 +108,9 @@
     }
   }
 
-  // Used on the dashboard's white surface: recolors the white silhouette to
-  // Kahoot purple by using it as an SVG luminance mask over a solid rect,
-  // rather than drawing it white-on-white or boxing it.
+  // Recolors the white silhouette to Kahoot purple by using it as an SVG
+  // luminance mask over a solid rect, rather than drawing it white-on-white
+  // or boxing it.
   function purpleMaskedRect(x, y, w, h, appendMaskTo) {
     const uid = `qahoot-mask-${maskCounter++}`;
 
@@ -83,32 +140,34 @@
 
   const RULES = [
     {
-      // Top control bar logo (game) — purple background, inline SVG
+      // Top control bar logo (game) — usually a colored background, inline SVG
       selector: 'svg[data-functional-selector="control-bar-logo"]',
-      swap: (node) => svgSwapWhite(node, 440, 150)
+      swap: (node) => svgSwapAdaptive(node, 440, 150)
     },
     {
-      // Lobby + podium logo — purple background, real <img>
+      // Lobby + podium logo — colored background, real <img> (no fill to read,
+      // so no purple-adaptive path here; always white)
       selector: 'img[class*="game-logo__Image"], img[src*="images-cdn.kahoot.it/c6b640b1-ed34-4645-828c-326c42190340"]',
       swap: (node) => imgSwap(node)
     },
     {
-      // Splash/gong screen logo — purple background, inline SVG
+      // Splash/gong screen logo — usually a colored background, inline SVG
       selector: 'svg[alt="Kahoot! logo"], svg[class*="splash-screen__SplashLogo"]',
-      swap: (node) => svgSwapWhite(node, 440, 150)
+      swap: (node) => svgSwapAdaptive(node, 440, 150)
     },
     {
-      // Dashboard top-bar logo — white background. Two <path> elements:
-      // [0]=wordmark (recolored purple via mask), [1]=GO mark (left untouched).
+      // Dashboard top-bar logo — two <path> elements: [0]=wordmark
+      // (recolored to match its original fill), [1]=GO mark (left untouched).
       selector: 'span[data-functional-selector="kahoot-logo"] svg',
       swap: (node) => {
         const paths = node.querySelectorAll('path');
         if (paths.length === 0) return;
 
         const wordmarkPath = paths[0];
+        const fill = wordmarkPath.getAttribute('fill') || getComputedStyle(wordmarkPath).fill;
         const bbox = wordmarkPath.getBBox();
-        const rect = purpleMaskedRect(bbox.x, bbox.y, bbox.width, bbox.height, node);
-        wordmarkPath.replaceWith(rect);
+        const el = paintLogo(bbox.x, bbox.y, bbox.width, bbox.height, fill, node);
+        wordmarkPath.replaceWith(el);
       }
     },
   ];
