@@ -1,5 +1,9 @@
 # Qahoot
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/maxerrules/Qahoot/main/qahoot-purple.png" alt="Qahoot logo" width="480">
+</p>
+
 Turns Kahoot into Qahoot. Purely cosmetic, purely for laughs — swaps the logo and renames "Kahoot" to "Qahoot" everywhere on kahoot.it, live, while you play.
 
 ## Install (2 minutes, one time)

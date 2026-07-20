@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Qahoot
 // @namespace    qahoot-prank
-// @version      1.5
+// @version      1.6
 // @description  Replace Kahoot logo with Qahoot logo
 // @match        https://*.kahoot.it/*
 // @run-at       document-start
@@ -75,7 +75,22 @@
     return image;
   }
 
-  function svgSwapAdaptive(node, w, h) {
+  // Prefers the node's own viewBox (real dimensions) over the fallback,
+  // since different logo instances (e.g. mobile's small/medium breakpoints)
+  // ship genuinely different aspect ratios.
+  function getViewBoxSize(node, fallbackW, fallbackH) {
+    const vb = node.getAttribute('viewBox');
+    if (vb) {
+      const parts = vb.trim().split(/\s+/).map(Number);
+      if (parts.length === 4 && parts.every(Number.isFinite)) {
+        return { w: parts[2], h: parts[3] };
+      }
+    }
+    return { w: fallbackW, h: fallbackH };
+  }
+
+  function svgSwapAdaptive(node, fallbackW, fallbackH) {
+    const { w, h } = getViewBoxSize(node, fallbackW, fallbackH);
     const originalPath = node.querySelector('path, [fill]');
     const fill = originalPath ? (originalPath.getAttribute('fill') || getComputedStyle(originalPath).fill) : null;
     const go = isGoVariant(node);
@@ -154,6 +169,24 @@
       // Splash/gong screen logo — usually a colored background, inline SVG
       selector: 'svg[alt="Kahoot! logo"], svg[class*="splash-screen__SplashLogo"]',
       swap: (node) => svgSwapAdaptive(node, 440, 150)
+    },
+    {
+      // Home/join-by-PIN screen logo — real <img> referencing an external
+      // SVG asset (no fill to read; always white)
+      selector: '[data-functional-selector="brand-logo"] img',
+      swap: (node) => imgSwap(node)
+    },
+    {
+      // Mobile in-game logo — small/medium responsive variants both render
+      // in the DOM simultaneously with their own distinct viewBox, so
+      // svgSwapAdaptive's own-viewBox detection (not the fallback) handles them
+      selector: 'svg[aria-label="Kahoot Logo"]',
+      swap: (node) => svgSwapAdaptive(node, 440, 150)
+    },
+    {
+      // "Powered by Kahoot" badge — real <img>, no fill to read; always white
+      selector: 'div[class*="powered-by-logo__PoweredByLogo"] img',
+      swap: (node) => imgSwap(node)
     },
     {
       // Dashboard top-bar logo — two <path> elements: [0]=wordmark
