@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Qahoot
 // @namespace    qahoot-prank
-// @version      1.4
+// @version      1.5
 // @description  Replace Kahoot logo with Qahoot logo
 // @match        https://*.kahoot.it/*
 // @run-at       document-start
@@ -172,7 +172,20 @@
     },
   ];
 
-  function swapText(root = document.body) {
+  function replaceKahoot(str) {
+    return str
+      .replace(/KAHOOT/g, 'QAHOOT')
+      .replace(/Kahoot/g, 'Qahoot')
+      .replace(/kahoot/g, 'qahoot');
+  }
+
+  function fixTextNode(node) {
+    if (/kahoot/i.test(node.nodeValue)) {
+      node.nodeValue = replaceKahoot(node.nodeValue);
+    }
+  }
+
+  function swapText(root = document.documentElement) {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
       acceptNode: (node) => {
         const parentTag = node.parentElement?.tagName;
@@ -185,12 +198,7 @@
     let n;
     while ((n = walker.nextNode())) nodes.push(n);
 
-    nodes.forEach(node => {
-      node.nodeValue = node.nodeValue
-        .replace(/KAHOOT/g, 'QAHOOT')
-        .replace(/Kahoot/g, 'Qahoot')
-        .replace(/kahoot/g, 'qahoot');
-    });
+    nodes.forEach(fixTextNode);
   }
 
   function markDone(node) {
@@ -216,11 +224,22 @@
 
   new MutationObserver(muts => {
     for (const m of muts) {
+      // Virtualized/recycled lists (e.g. the catalog/search results) rewrite
+      // an existing text node's data in place instead of adding new nodes —
+      // that shows up as a characterData mutation, not childList.
+      if (m.type === 'characterData') {
+        fixTextNode(m.target);
+        continue;
+      }
       m.addedNodes.forEach(node => {
+        if (node.nodeType === 3) {
+          fixTextNode(node);
+          return;
+        }
         if (node.nodeType !== 1) return;
         applyRules(node.parentElement || document);
         swapText(node.parentElement || document.body);
       });
     }
-  }).observe(document.documentElement, { childList: true, subtree: true });
+  }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
 })();
